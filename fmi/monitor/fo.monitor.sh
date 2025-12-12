@@ -40,6 +40,7 @@ SEARCHING=false
 PRINT_LEVEL="ALL"
 DAYS=2
 PRINT_ENDED=false
+PRINT_STAT_HEADER=true
 
 TAG="MAIN"
 COLS=$(tput cols)
@@ -52,7 +53,9 @@ declare -A SITE_DATA_ENDS
 # --- Helper functions --------------------------------------------------------
 
 print_line() {
-    echo -e ${BLUE}${LINE}${NC}
+    if [[ $PRINT_LEVEL != 'STAT' ]]; then
+        echo -e ${BLUE}${LINE}${NC}
+    fi
 }
 
 usage() {
@@ -72,9 +75,10 @@ Options:
   --ectoui            Do EC to UI update check
   --radobs            Do RadObs checks 
   --satobs            Do SatObs checks
-  --geojsons          Do geojsons update checks
+  --geojson           Do geojson update checks
   --do-all            Do all the above
   --ended             Print also the sites/blocks that have data_end
+  --noheader          Do not print stat header
   --search <this>     Search the word from result line (Works for FMI)
   --year <year>       Use given year (default: today's year)
   --month <month>     Use given month (default: today's month) remember to pad 1-9 with a 0
@@ -110,15 +114,48 @@ log() {
             ;;
         *) color="${BLUE}" ;;
     esac
+    PRINT=false
     if [[ $PRINT_LEVEL == "ALL" ]] || \
        [[ $level == ${PRINT_LEVEL^^} ]] || \
-       [[ $level == "RUNINFO" ]]; then 
+       [[ $level == "RUNINFO" ]]; then
+        PRINT=true
+    fi
+    if [[ $PRINT_LEVEL == 'STAT' ]] && [[ $level == "RUNINFO" ]]; then
+        PRINT=false
+    fi
+    if $PRINT; then
         echo -e "${color}[$(date '+%Y-%m-%d %H:%M:%S')][$level][$TAG]${NC} $1"
         # if we have the second argument and we want more output
         if [[ $# == 2 ]]; then
             if $VERBOSE; then echo "$2"; fi
         fi
     fi
+}
+
+print_stat_header() {
+    if [[ $PRINT_LEVEL == 'STAT' ]] && $PRINT_STAT_HEADER; then 
+        echo "Checked at $(date '+%Y-%m-%d %H:%M')"
+        echo "Module, Err, Warn, Old, Notime, Eventfile, PythonWarn"      
+    fi
+}
+
+print_stat_line() {
+    local mod=""
+    local err=0
+    local warn=0
+    local warnold=0
+    local notime=0
+    local eventfiles=0
+    local future=0
+    if (( $# > 0 )); then mod=$1; fi 
+    if (( $# > 1 )); then err=$2; fi
+    if (( $# > 2 )); then warn=$3; fi
+    if (( $# > 3 )); then warnold=$4; fi
+    if (( $# > 4 )); then notime=$5; fi
+    if (( $# > 5 )); then eventfiles=$6; fi
+    if (( $# > 6 )); then future=$7; fi
+
+    echo -e "$mod, $err, $warn, $warnold, $notime, $eventfiles, $future"
 }
 
 run_info() {
@@ -207,12 +244,15 @@ get_block_data_ends() {
 datasense_data() {
     TAG="DATASENSE"
     log WARN "# Datasense check not implemented, Not used!"
+    print_stat_line $TAG 0 1 0 0
     print_line
 }
 
 bar_data() {
     TAG='BARData'
     shopt -s nullglob
+    local err_count=0
+    local old_count=0
     local bar_path=${MAIN_PATH}'BARData/'
     for dir in ${bar_path}*/flux/res ${bar_path}*/pyflux/res; do
         local no_error=true
@@ -223,6 +263,7 @@ bar_data() {
         local site=${SITESPLIT[5]}
         if (( ${#files[@]} == 0 )); then
             log ERROR "Site: ${site}: No file !!"
+            ((err_count++))
             no_error=false
         else
             for file in "${files[@]}"; do
@@ -235,6 +276,7 @@ bar_data() {
                 let DIFF=($(date +%s -d $YEAR$MONTH$DAY)-$(date +%s -d ${last_date:0:10}))/86400
                 if (( $DIFF > $DAYS )); then
                     log ERROR "Site: ${site}, last date: $last_date"
+                    ((old_count++))
                     no_error=false
                 fi
             done
@@ -244,6 +286,7 @@ bar_data() {
         fi
     done
     shopt -u nullglob
+    print_stat_line $TAG $err_count 0 $old_count 0
     print_line
 }
 
@@ -261,15 +304,18 @@ icos_data() {
     # Execution halted
     local lines=$(grep $YEAR-$MONTH-$DAY ${log_path} | grep Error)  
     local no_error=true
+    local err_count=0
     while IFS="" read -r line; do
         if [[ ! -z $line ]]; then 
            log ERROR "$line"
+           ((err_count++))
            no_error=false
         fi
     done <<< "$lines" 
     if $no_error; then 
         log INFO "Log, OK!"
     fi
+    print_stat_line $TAG $err_count
     print_line
 }
 
@@ -281,6 +327,8 @@ hy_data() {
     # 2025/12/08 06:15:32 INFO  : viikki_fluxres_2025-12.csv: Copied (replaced existing)
     local lines=$(grep $YEAR/$MONTH/$DAY ${log_path} | grep -E $YEAR-$MONTH)
     local i=0
+    local err_count=0
+    local old_count=0
     while IFS="" read -r line; do
         if [[ ! -z $line ]]; then
             log DEBUG "$line"
@@ -289,12 +337,14 @@ hy_data() {
     done <<< "$lines" 
     if (( i == 0 )); then
         log ERROR "No current month log lines found"
+        ((err_count++))
     fi
     #do file check for flux
     local viikki_file_path=${MAIN_PATH}'hy-eddy2/data/viikki_fluxres_'${YEAR}'-'${MONTH}'.csv'
     local files=($viikki_file_path)
     if (( ${#files[@]} == 0 )); then
         log ERROR "Did not find current month Viikki fluxres"
+        ((err_count++))
     else
         # there is only one file
         local last_line="$(tail -n 1 ${files[0]})"
@@ -304,11 +354,13 @@ hy_data() {
         let DIFF=($(date +%s -d $YEAR$MONTH$DAY)-$(date +%s -d ${last_date}))/86400
         if (( $DIFF > $DAYS )); then
             log ERROR "Site: ${site}: last date: $last_date !!"
+            ((old_count++))
         else
             log INFO "Fluxres file, OK!"
         fi
     fi   
     shopt -u nullglob
+    print_stat_line $TAG $err_count 0 $old_count
     print_line
 }
 
@@ -320,6 +372,10 @@ fmi_data() {
     # /data/field-observatory/observations/haltiala/fmimeteo/observations/2025-12.csv
     local sites=(${MAIN_PATH}field-observatory/observations/*)
     local i=0
+    local err_count=0
+    local warn_count=0
+    local old_count=0
+    local notime_count=0
     while (( i < ${#sites[@]} )); do
         # folder had some extra log files so while at it skip them.
         local file_ending=${sites[i]##*.} 
@@ -328,8 +384,9 @@ fmi_data() {
             local site=${sites[$i]##*/}
             local file=(${sites[$i]}'/fmimeteo/observations/'$YEAR-$MONTH'.csv')
             if [[ ! -f $file ]]; then
-                log WARN "Site: ${site}, no monthly file"
+                log ERROR "Site: ${site}, no monthly file"
                 log DEBUG "$(echo '...'; ls ${sites[$i]}'/fmimeteo/observations/'* | tail -n 4)"
+                ((err_count++))
             else
                 #only one file for the month
                 local last_line=$(tail -n 1 ${file})
@@ -337,6 +394,7 @@ fmi_data() {
                     if [[ ${last_line:1:4} != $YEAR ]]; then
                         log WARN "Site: $site, no year on last line, File: ${file##*/}" "$last_line"
                         log DEBUG "$file"
+                        ((notime_count++))
                     else
                         # should be at least the same year check the rest
                         # note this file has " around time
@@ -345,6 +403,7 @@ fmi_data() {
                         if (( $DIFF > $DAYS )); then
                             log WARN "Site: $site File: ${file##*/}" "$last_line"
                             log ERROR "Site: ${site}: last date: $last_date"
+                            ((old_count++))
                         else
                             log DEBUG "$file" "$last_line"
                             log INFO "Site: $site, OK!"
@@ -362,21 +421,28 @@ fmi_data() {
         (( i++ ))
     done
     shopt -u nullglob
+    print_stat_line $TAG $err_count $warn_count $old_count $notime_count
     print_line
 }
 
 smhi_data() {
     TAG='SMHI'
     # LOG
+    local err_count=0
+    local warn_count=0
+    local old_count=0
+    local notime_count=0
     local log_path=${LOGS_PATH}'fieldobs-smhi-cronjob.log'
     local last_line=$(tail -n 1 $log_path 2>&1)
     if [[ ${last_line:0:4} != $YEAR ]]; then
         log ERROR "No year on line start" "${last_line}"
+        ((err_count++))
     else 
         local last_date=${last_line:0:10}
         let DIFF=($(date +%s -d $YEAR$MONTH$DAY)-$(date +%s -d ${last_date}))/86400
         if (( $DIFF > $DAYS )); then
             log WARN "Log file, last date: $last_date" "${last_line}"
+            ((warn_count++))
         else
             log INFO "Log file, OK!" "$last_line"
         fi
@@ -386,12 +452,14 @@ smhi_data() {
     local file=${MAIN_PATH}'field-observatory/ui-data/hoja/smhimeteo/daily/'${YEAR}.csv
     if [[ ! -f ${file} ]]; then
         log ERROR "No daily file found for ${YEAR}"
+        ((err_count++))
     else
         local last_line=$(tail -n 1 ${file})
         local last_date=${last_line:0:10}
         let DIFF=($(date +%s -d $YEAR$MONTH$DAY)-$(date +%s -d ${last_date}))/86400
         if (( $DIFF > $DAYS )); then
             log WARN "Daily file, last date: $last_date" "$last_line"
+            ((warn_count++))
         else
             log INFO "Daily file, OK!" "$last_line"
         fi
@@ -399,13 +467,16 @@ smhi_data() {
     local file=${MAIN_PATH}'field-observatory/ui-data/hoja/smhimeteo/hourly/'${YEAR}-${MONTH}.csv
     if [[ ! -f ${file} ]]; then
         log ERROR "No hourly file found for ${YEAR} ${MONTH}"
+        ((err_count++))
     else
         if (( $DIFF > $DAYS )); then
             log WARN "Hourly file, last date: $last_date" "$last_line"
+            ((warn_count++))
         else
             log INFO "Hourly file, OK!" "$last_line"
         fi
     fi
+    print_stat_line $TAG $err_count $warn_count $old_count $notime_count
     print_line
 }
 
@@ -414,7 +485,10 @@ gapfilling_data() {
     # LOG
     local log_file=${LOGS_PATH}'fieldobs-ecsites-run-gapfilling-cronjob.log'
     local todays_lines=$(sed -n '/'${YEAR}'-'${MONTH}'-'${DAY}'/,$p' ${log_file} 2>&1)
-    local count=0
+    local err_count=0
+    local warn_count=0
+    local old_count=0
+    local notime_count=0
     local first_timestr=""
     local last_timestar=""
     local first_timestamp=""
@@ -425,9 +499,9 @@ gapfilling_data() {
                 if $VERBOSE; then
                    log WARN "$line"
                 fi
-                ((count++))
+                ((notime_count++))
             else
-                if (( count == 0 )); then
+                if (( notime_count == 0 )); then
                     first_timestr=${line:0:19}
                     first_timestamp=$(date +%s -d "${first_timestr}")
                 else
@@ -438,9 +512,9 @@ gapfilling_data() {
         fi
     done <<< "$todays_lines"    
     if [[ -z "$todays_lines" ]]; then 
-        log WARN "No log lines for today"
+        log ERROR "No log lines for today"
+        ((err_count++))
     else
-        log WARN "${count} lines that do not start with time (--verbose)"
         let DIFF=($last_timestamp - $first_timestamp)/60
         log DEBUG "First time: ${first_timestr}, last time: ${last_timestr}" 
         log DEBUG "First timestamp: $first_timestamp, last timestamp: $last_timestamp"
@@ -458,37 +532,52 @@ gapfilling_data() {
         let DIFF=($(date +%s -d $YEAR$MONTH$DAY)-$(date +%s -d ${last_date}))/86400
         if (( $DIFF > $DAYS )); then
             log WARN "Site: $site data file, last date: $last_date" "$last_line"
+            ((old_count++))
         else
             log INFO "Site: $site: data file, OK!" "$last_line"
         fi
        log DEBUG "$last_line"
     done    
+    print_stat_line $TAG $err_count $warn_count $old_count $notime_count
     print_line
 }
 
 smear_data() {
     TAG='SMEAR'
     # LOG usefull only if something is totally wrong (no times in log file)
+    local err_count=0
+    local warn_count=0
+    local old_count=0
+    local notime_count=0
     local log_file=${LOGS_PATH}'fieldobs-ecsites-update-smear-flux-to-observations-cronjob.log'
     local data_path=${MAIN_PATH}'field-observatory/observations/viikki/smear_flux/'$YEAR'-'$MONTH'.csv'
     if [[ ! -f $data_path ]]; then 
         log ERROR 'Viikki, no monthly file for '$YEAR'-'$MONTH "$data_path"
+        ((err_count++))
     else
         local last_line=$(tail -n 1 ${data_path} 2>&1)
         local last_date=${last_line:0:10}
         let DIFF=($(date +%s -d $YEAR$MONTH$DAY)-$(date +%s -d ${last_date}))/86400
         if (( $DIFF > $DAYS )); then
             log WARN "Viikki: monthly file, last date: $last_date" "$last_line"
+            ((old_count++))
         else
             log INFO "Viikki: montly file, OK!" "$last_line"
         fi 
     fi
+    print_stat_line $TAG $err_count $warn_count $old_count $notime_count
     print_line
 }
 
 ectoui_data() {
     TAG='ECTOUI'
     local log_file=${LOGS_PATH}'fieldobs-ecsites-update-ec-data-to-ui-cronjob.log'
+    local err_count=0
+    local warn_count=0
+    local old_count=0
+    local notime_count=0
+    local noevents_count=0
+    local futurewarn_count=0
     # offset the hour back... at least for now the HELSINKI UTC ERROR is the reason
     # Example given HOURS 2 and now is 10:00:00 so $hour is going to be 8:00:00 and $nhour 9:00:00
     local hour=$(date -d "-$HOURS hour" +%H)
@@ -497,9 +586,6 @@ ectoui_data() {
     log DEBUG "Getting from hour $hour to $nhour"
     local todays_lines=$(sed -n '/'${YEAR}'-'${MONTH}'-'${DAY}' '${hour}':/,$p' ${log_file} | \
                          sed -n '/'$YEAR'-'${MONTH}'-'${DAY}' '${nhour}':/q;p')
-    local count=0
-    local noevents_count=0
-    local futurewarn_count=0
     local first_timestr=""
     local last_timestar=""
     local first_timestamp=""
@@ -510,11 +596,11 @@ ectoui_data() {
                 if $VERBOSE; then
                    log WARN "$line"
                 fi
-                ((count++))
+                ((notime_count++))
                 if [[ $line == *'No events'* ]]; then ((noevents_count++)); fi
                 if [[ $line == *'FutureWarning'* ]]; then ((futurewarn_count++)); fi
             else
-                if (( count == 0 )); then
+                if (( notime_count == 0 )); then
                     first_timestr=${line:0:19}
                     first_timestamp=$(date +%s -d "${first_timestr}")
                 else
@@ -525,19 +611,19 @@ ectoui_data() {
         fi
     done <<< "$todays_lines"    
     if [[ -z "$todays_lines" ]]; then 
-        log WARN "No log lines for today"
+        log ERROR "No log lines for today"
+        ((err_count++))
     else
-        log WARN "${count} lines that do not start with time (--verbose)"
-        log WARN "${noevents_count} no event file errors"
-        log WARN "${futurewarn_count} Python FutureWarnings"
         let DIFF=($last_timestamp - $first_timestamp)/60
         log DEBUG "First time: ${first_timestr}, last time: ${last_timestr}" 
         log DEBUG "First timestamp: $first_timestamp, last timestamp: $last_timestamp"
         log INFO "Logged $DIFF minutes of runtime"
         if (( $DIFF > 30 )); then
-            log ERROR "Took a long time"
+            log WARN "Took a long time"
+            ((warn_count++))
         fi
     fi
+    print_stat_line $TAG $err_count $warn_count $old_count $notime_count $noevents_count $futurewarn_count
     print_line
 }
 
@@ -546,8 +632,10 @@ radobs_data() {
     local log_file=${LOGS_PATH}'fieldobs-radobs-cronjob.log'
     local lines=$(grep $YEAR-$MONTH-$DAY ${log_file} 2>&1)
     local i=0
-    local errors=0
-    local notime=0
+    local err_count=0
+    local warn_count=0
+    local old_count=0
+    local notime_count=0
     local first_timestr=""
     local last_timestar=""
     local first_timestamp=""
@@ -570,13 +658,13 @@ radobs_data() {
                 fi 
             fi
             if [[ $line == *'ERROR'* ]]; then 
-                ((errors++))
+                ((err_count++))
                 if $VERBOSE && ! $DEBUGGING; then
                     log ERROR "$line"
                 fi
             fi
             if [[ $YEAR != ${line:0:4} ]]; then
-                ((notime++))
+                ((notime_count++))
                 if $VERBOSE && ! $DEBUGGING; then
                     log WARN "$line"
                 fi
@@ -594,21 +682,24 @@ radobs_data() {
     fi
     done <<< "$lines"
     if [[ -z "$lines" ]]; then 
-        log WARN "No log lines for today"
+        log ERROR "No log lines for today"
+        ((err_count++))
     else
         let DIFF=($last_timestamp - $first_timestamp)/60
         log DEBUG "First time: ${first_timestr}, last time: ${last_timestr}" 
         log DEBUG "First timestamp: $first_timestamp, last timestamp: $last_timestamp"
         log INFO "Logged $DIFF minutes of runtime"
         if (( $DIFF > 30 )); then
-            log ERROR "Took a long time"
+            log WARN "Took a long time"
+            ((warn_count++))
         fi
-        if (( $errors>0 )); then 
+        if (( $err_count>0 )); then 
             log ERROR 'Error count '$errors' (--verbose)'
+
         else
             log INFO 'No logged errors'
         fi
-        if (( $notime > 0 )); then
+        if (( $notime_count > 0 )); then
             log WARN $notime' lines without time (--verbose)'
         fi
     fi
@@ -620,10 +711,12 @@ radobs_data() {
         let DIFF=($(date +%s -d $YEAR$MONTH$DAY)-$(date +%s -d ${last_date}))/86400
         if (( $DIFF > $DAYS )); then
             log WARN "${s}: irradiation file, last date: $last_date" "$last_line"
+            ((old_count++))
         else
             log INFO "${s}: irradiation file, OK!" "$last_line"
         fi 
     done
+    print_stat_line $TAG $err_count $warn_count $old_count $notime_count
     print_line
 }
 
@@ -632,8 +725,10 @@ satobs_data() {
     local log_file=${LOGS_PATH}'fieldobs-satobs-cronjob.log'
     local lines=$(grep $YEAR-$MONTH-$DAY ${log_file} 2>&1)
     local i=0
-    local errors=0
-    local notime=0
+    local err_count=0
+    local warn_count=0
+    local old_count=0
+    local notime_count=0
     local first_timestr=""
     local last_timestar=""
     local first_timestamp=""
@@ -651,13 +746,13 @@ satobs_data() {
                 fi
             fi 
             if [[ $line == *'ERROR'* ]]; then 
-                ((errors++))
+                ((err_count++))
                 if $VERBOSE && ! $DEBUGGING; then
                     log ERROR "$line"
                 fi
             fi
             if [[ $YEAR != ${line:0:4} ]]; then
-                ((notime++))
+                ((notime_count++))
                 if $VERBOSE && ! $DEBUGGING; then
                     log WARN "$line"
                 fi
@@ -674,21 +769,23 @@ satobs_data() {
     fi
     done <<< "$lines"
     if [[ -z "$lines" ]]; then 
-        log WARN "No log lines for today"
+        log ERROR "No log lines for today"
+        ((err_count++))
     else
         let DIFF=($last_timestamp - $first_timestamp)/60
         log DEBUG "First time: ${first_timestr}, last time: ${last_timestr}" 
         log DEBUG "First timestamp: $first_timestamp, last timestamp: $last_timestamp"
         log INFO "Logged $DIFF minutes of runtime"
         if (( $DIFF > 30 )); then
-            log ERROR "Took a long time"
+            log WARN "Took a long time"
+            ((warn_count++))
         fi
-        if (( $errors>0 )); then 
+        if (( $err_count>0 )); then 
             log ERROR 'Error count '$errors' (--verbose)'
         else
             log INFO 'No logged errors'
         fi
-        if (( $notime > 0 )); then
+        if (( $notime_count > 0 )); then
             log WARN $notime' lines without time (--verbose)'
         fi
     fi
@@ -721,6 +818,7 @@ satobs_data() {
                 if (( $DIFF > $DAYS )); then
                     log WARN "${s}: qi file, last date: $qi_last_date (good OBS: ${last_date})" "$qi_last_line"
                     log DEBUG "$last_line"
+                    ((old_count++))
                 else
                     log INFO "${s}: qi file, OK: $qi_last_date (good OBS: ${last_date})" "$last_line"
                     log DEBUG "$last_line"
@@ -729,10 +827,11 @@ satobs_data() {
         fi
     done
     log INFO "${block_count} blocks (also ended blocks: ${PRINT_ENDED})"
+    print_stat_line $TAG $err_count $warn_count $old_count $notime_count
     print_line
 }
 
-geojsons_data() {
+geojson_data() {
     TAG='GEOJSONS'
     local log_file=${LOGS_PATH}'fieldobs-update-ui-geojsons-cronjob.log'
     # offset the hour back... at least for now the HELSINKI UTC ERROR is the reason
@@ -743,9 +842,11 @@ geojsons_data() {
     log DEBUG "Getting from hour $hour to $nhour"
     local hours_lines=$(sed -n '/'${YEAR}'-'${MONTH}'-'${DAY}' '${hour}':/,$p' ${log_file} | \
                          sed -n '/'$YEAR'-'${MONTH}'-'${DAY}' '${nhour}':/q;p')
-    local errors=0
-    local notime=0
     local first_timestr=""
+    local err_count=0
+    local warn_count=0
+    local old_count=0
+    local notime_count=0
     local last_timestar=""
     local first_timestamp=""
     local last_timestamp=""
@@ -753,13 +854,13 @@ geojsons_data() {
         if [[ ! -z $line ]]; then
             log DEBUG "$line"
             if [[ $line == *'ERROR'* ]]; then 
-                ((errors++))
+                ((err_count++))
                 if $VERBOSE && ! $DEBUGGING; then
                     log ERROR "$line"
                 fi
             fi
             if [[ $YEAR != ${line:0:4} ]]; then
-                ((notime++))
+                ((notime_count++))
                 if $VERBOSE && ! $DEBUGGING; then
                     log WARN "$line"
                 fi
@@ -776,50 +877,50 @@ geojsons_data() {
     fi
     done <<< "$hours_lines"
     if [[ -z "$hours_lines" ]]; then 
-        log WARN "No log lines for today"
+        log ERR "No log lines for today"
+        ((err_count++))
     else
         let DIFF=($last_timestamp - $first_timestamp)/60
         log DEBUG "First time: ${first_timestr}, last time: ${last_timestr}" 
         log DEBUG "First timestamp: $first_timestamp, last timestamp: $last_timestamp"
         log INFO "Logged $DIFF minutes of runtime"
         if (( $DIFF > 30 )); then
-            log ERROR "Took a long time"
+            log WARN "Took a long time"
+            ((warn_count++))
         fi
-        if (( $errors>0 )); then 
+        if (( $err_count>0 )); then 
             log ERROR 'Error count '$errors' (--verbose)'
         else
             log INFO 'No logged errors'
         fi
-        if (( $notime > 0 )); then
-            log WARN $notime' lines without time (--verbose)'
+        if (( $notime_count > 0 )); then
+            log WARN $notime_count' lines without time (--verbose)'
         fi
     fi
-    
+    print_stat_line $TAG $err_count $warn_count $old_count $notime_count
     print_line
 }
 
 # --- Parse arguments ---------------------------------------------------------
-TAG='MAIN'
-log RUNINFO "Monitor starting at $(date '+%Y-%m-%d %H:%M')"
-TAG='RUN'
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --do-all) DO_ALL=true; log RUNINFO "DO-ALL";;
-        --bar) BAR_DATA=true; log RUNINFO "BARData";;
-        --datasense) DATASENSE_DATA=true; log RUNINFO "DATASENSE";;
-        --icos) ICOS_DATA=true; log RUNINFO "ICOS";;
-        --hy) HY_DATA=true; log RUNINFO " HY";;
-        --fmi) FMI_DATA=true; log RUNINFO " FMI";;
-        --smhi) SMHI_DATA=true; log RUNINFO "SMHI";;
-        --gapfilling) GAPFILLING_DATA=true; log RUNINFO "GAP FILLING";;
-        --smear) SMEAR_DATA=true; log RUNINFO "SMEAR";;
-        --ectoui) ECTOUI_DATA=true; log RUNINFO "EC TO UI";;
-        --radobs) RADOBS_DATA=true; log RUNINFO "RADOBS";;
-        --satobs) SATOBS_DATA=true; log RUNINFO "SATOBS";;
-        --geojsons) GEOJSONS_DATA=true; log RUNINFO "GEOJSONS";;
+        --do-all) DO_ALL=true;;
+        --bar) BAR_DATA=true;;
+        --datasense) DATASENSE_DATA=true;;
+        --icos) ICOS_DATA=true;;
+        --hy) HY_DATA=true;;
+        --fmi) FMI_DATA=true;;
+        --smhi) SMHI_DATA=true;;
+        --gapfilling) GAPFILLING_DATA=true;;
+        --smear) SMEAR_DATA=true;;
+        --ectoui) ECTOUI_DATA=true;;
+        --radobs) RADOBS_DATA=true;;
+        --satobs) SATOBS_DATA=true;;
+        --geojson) GEOJSON_DATA=true;;
         --verbose) VERBOSE=true;;
         --debug) DEBUGGING=true; VERBOSE=true;;
         --ended) PRINT_ENDED=true;;
+        --noheader) PRINT_STAT_HEADER=false;;
         --days)
             shift
             DAYS=${1:-days}
@@ -874,6 +975,8 @@ done
 
 # --- Main execution flow -----------------------------------------------------
 TAG='MAIN'
+log RUNINFO "Monitor starting at $(date '+%Y-%m-%d %H:%M')"
+print_stat_header
 get_site_data_ends
 get_block_data_ends
 run_info
@@ -891,7 +994,7 @@ if $DO_ALL; then
   ECTOUI_DATA=true
   RADOBS_DATA=true
   SATOBS_DATA=true
-  GEOJSONS_DATA=true
+  GEOJSON_DATA=true
 fi
 
 if $DATASENSE_DATA; then 
@@ -927,8 +1030,8 @@ fi
 if $SATOBS_DATA; then
     satobs_data
 fi
-if $GEOJSONS_DATA; then
-    geojsons_data
+if $GEOJSON_DATA; then
+   geojson_data
 fi
 TAG='MAIN'
 log RUNINFO "Monitor ended at $(date '+%Y-%m-%d %H:%M')"
