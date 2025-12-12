@@ -214,7 +214,6 @@ bar_data() {
     TAG='BARData'
     shopt -s nullglob
     local bar_path=${MAIN_PATH}'BARData/'
-    log INFO "# Check start"
     for dir in ${bar_path}*/flux/res ${bar_path}*/pyflux/res; do
         local no_error=true
         log DEBUG "Next -> $dir"
