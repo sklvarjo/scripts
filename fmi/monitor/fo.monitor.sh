@@ -539,6 +539,7 @@ ectoui_data() {
             log ERROR "Took a long time"
         fi
     fi
+    print_line
 }
 
 radobs_data() {
