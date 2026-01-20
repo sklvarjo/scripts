@@ -19,11 +19,14 @@ TABPFN_MODEL_CACHE_DIR=/home/varjonen/Downloads/tabpfnmodels/
 # Create the token for the reading in https://huggingface.co/settings/tokens
 # Only needs "Read access to contents of all public gated repos you can access"
 # in the repositories category
-HF_TOKEN=hf_addyourown
+#HF_TOKEN=hf_addyourown
 
 # Export env things
 export TABPFN_MODEL_CACHE_DIR=$TABPFN_MODEL_CACHE_DIR
-export HF_TOKEN=$HF_TOKEN
+#export HF_TOKEN=$HF_TOKEN
+# or rather read it from a file that is not included in this repo
+# use form HF_TOKEN=hf_ffffff in the file
+export $(grep -v '^#' .env | xargs)
 
 # Activate env
 source $PYTHON_ENV_PATH/bin/activate
