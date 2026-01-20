@@ -1,0 +1,8 @@
+### ### ma 19.1.2026 14.17.02 +0200 ### ###
+ Given parameter... extra_info
+/home/varjonen/python-env-yleinen/lib/python3.12/site-packages/tabpfn/validation.py:56: UserWarning: Running on CPU with more than 200 samples may be slow.
+Consider using a GPU or the tabpfn-client API: https://github.com/PriorLabs/tabpfn-client
+  _validate_num_samples_for_cpu(
+ROC AUC: 0.9978173087416785
+Accuracy 0.9824561403508771
+[W119 14:17:28.985425620 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
