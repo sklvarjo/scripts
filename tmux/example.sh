@@ -1,0 +1,20 @@
+tmux new-session -d -n "one" -s "mysession" # create new session , detached
+tmux send-keys -t 0 "glances" Enter # this actually launches `glances` in my first window
+
+tmux new-window -n "two"
+tmux split-window -h -p 30 # split it into two halves
+tmux resize-pane -x 95
+tmux select-pane -t 0 # go back to the first pane
+
+tmux new-window -n "three"
+tmux split-window -h -p 30 # split it into two halves
+tmux select-pane -t 0 # go back to the first pane
+tmux send-keys -t 0 "cd work" Enter # change to specific subdir for these two panes
+tmux send-keys -t 1 "cd work" Enter
+
+# etc..you can keep adding more new windows as needed..
+
+sleep 1 # not sure why I had this...
+
+tmux select-window -t "mysession:one" # go back to the first window
+tmux attach-session -d
