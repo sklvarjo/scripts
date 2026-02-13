@@ -1,0 +1,9 @@
+<CORSConfiguration>
+<CORSRule>
+    <ID>FO</ID>
+    <AllowedOrigin>*</AllowedOrigin>
+    <AllowedMethod>GET</AllowedMethod>
+    <AllowedHeader>*</AllowedHeader>
+</CORSRule>
+</CORSConfiguration>
+
